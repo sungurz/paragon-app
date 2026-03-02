@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 from app.ui.main_window import MainWindow
 from app.ui.login_window import LoginWindow
 from app.db.database import SessionLocal
@@ -19,6 +19,8 @@ def main():
             login_window.close()
             main_window = MainWindow(user.role)
             main_window.show()
+            app.main_window = main_window
+            
         else:
             print("Login failed")
 
