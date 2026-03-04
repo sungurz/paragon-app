@@ -4,15 +4,14 @@ Seeds the database with:
   2. The 4 Paragon cities
   3. A default system admin account
 
-Run ONCE after create_tables:
-    python -m app.db.seed_data
+Run ONCE after create_tables has run.
 """
 from app.db.database import SessionLocal, engine
 from app.db.models import Base, Role, RoleName, City, User
 from app.auth.security import hash_password
 
 
-# ── Permission sets per role ──────────────────────────────────────────────────
+# ── Permission sets per role
 # Format: "module.action"  — checked in the service layer
 ROLE_PERMISSIONS = {
     RoleName.TENANT: [
@@ -94,7 +93,12 @@ ROLE_PERMISSIONS = {
     ],
     RoleName.MANAGER: [
         # Cross-city oversight — read-heavy, not operational
+        "user.create",
+        "user.view",
+        "user.update",
+        "user.deactivate",
         "tenant.view",
+        "tenant.view_ni",
         "apartment.view",
         "lease.view",
         "invoice.view",
@@ -106,10 +110,9 @@ ROLE_PERMISSIONS = {
         "report.finance",
         "city.create",
         "city.view",
-        "user.view",
         "audit_log.view",
-        "tenant.view_ni",
-    ],
+],
+
 }
 
 ROLE_DESCRIPTIONS = {
@@ -172,9 +175,9 @@ def seed():
             )
             db.add(admin)
             db.commit()
-            print("  ✓ Admin created  |  username: admin  |  password: admin123")
+            print("   Admin created  |  username: admin  |  password: admin123")
         else:
-            print("  ✓ Admin already exists")
+            print("   Admin already exists")
 
         print("\nSeed complete. Paragon database is ready.")
 

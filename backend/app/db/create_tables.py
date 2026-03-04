@@ -1,10 +1,8 @@
 """
-Run this once to create all Paragon tables in your database.
+Run this once to create all  tables in  database.
 Safe to run multiple times — uses checkfirst so it won't
 drop existing tables.
 
-Usage:
-    python -m app.db.create_tables
 """
 from app.db.database import engine
 from app.db.models import Base
