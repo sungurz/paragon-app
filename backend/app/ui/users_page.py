@@ -1,127 +1,157 @@
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,QMessageBox
-)
+import ttkbootstrap as tb
+from ttkbootstrap.constants import *
+from ttkbootstrap.dialogs import Messagebox
+
 from app.db.database import SessionLocal
 from app.db.models import User
-from app.ui.add_user_dialog import AddUserDialog
 from app.auth.security import hash_password
 
-class UsersPage(QWidget):
-    def __init__(self):
-        super().__init__()
+
+class UsersPage(tb.Frame):
+    """Users management page using ttkbootstrap."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
         self.db = SessionLocal()
-
-        layout = QVBoxLayout()
-        self.setLayout(layout)
-
-        # Add User button
-        self.btn_add = QPushButton("Add User")
-        layout.addWidget(self.btn_add)
-        self.btn_add.clicked.connect(self.open_add_user_dialog)
-
-        # User table
-        self.table = QTableWidget()
-        self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["ID", "Username", "Role"])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self.table)
-
-        self.btn_edit = QPushButton('Edit Selected User')
-        self.btn_delete = QPushButton('Delete Selected User')
-        layout.addWidget(self.btn_edit)
-        layout.addWidget(self.btn_delete)
-        
-        self.btn_edit.clicked.connect(self.edit_selected_user)
-        self.btn_delete.clicked.connect(self.delete_selected_user)
-        self.btn_edit.setFixedHeight(40)
-        self.btn_delete.setFixedHeight(40)
-        layout.addStretch()
+        self._build_ui()
         self.load_users()
-        
 
+    # ── UI ────────────────────────────────────────────────
+    def _build_ui(self):
+        # Header
+        header = tb.Frame(self, padding=(20, 16, 20, 8))
+        header.pack(fill=X)
+
+        tb.Label(header, text="Users", font=("Georgia", 20, "bold")).pack(side=LEFT)
+
+        btn_bar = tb.Frame(header)
+        btn_bar.pack(side=RIGHT)
+
+        tb.Button(btn_bar, text="＋  Add User", bootstyle="success",
+                  padding=(10, 6), command=self._open_add_dialog).pack(side=LEFT, padx=(0, 6))
+        tb.Button(btn_bar, text="✎  Edit", bootstyle="secondary",
+                  padding=(10, 6), command=self._edit_selected).pack(side=LEFT, padx=(0, 6))
+        tb.Button(btn_bar, text="🗑  Delete", bootstyle="danger",
+                  padding=(10, 6), command=self._delete_selected).pack(side=LEFT)
+
+        tb.Separator(self, orient=HORIZONTAL).pack(fill=X, padx=20)
+
+        # Table
+        table_frame = tb.Frame(self, padding=(20, 12, 20, 0))
+        table_frame.pack(fill=BOTH, expand=YES)
+
+        cols = ("id", "username", "role", "full_name")
+        self.tree = tb.Treeview(
+            table_frame, columns=cols, show="headings",
+            bootstyle="dark", selectmode="browse",
+        )
+
+        col_cfg = [
+            ("id",        "ID",        60,  CENTER),
+            ("username",  "Username",  200, W),
+            ("role",      "Role",      120, CENTER),
+            ("full_name", "Full Name", 220, W),
+        ]
+        for col_id, heading, width, anchor in col_cfg:
+            self.tree.heading(col_id, text=heading, anchor=anchor)
+            self.tree.column(col_id, width=width, anchor=anchor, minwidth=40)
+
+        scrollbar = tb.Scrollbar(table_frame, orient=VERTICAL,
+                                 command=self.tree.yview, bootstyle="round-dark")
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        self.tree.pack(side=LEFT, fill=BOTH, expand=YES)
+        scrollbar.pack(side=RIGHT, fill=Y)
+
+        # Footer count
+        self._count_var = tb.StringVar()
+        tb.Label(self, textvariable=self._count_var,
+                 font=("Helvetica", 10), bootstyle="secondary").pack(
+            anchor=E, padx=24, pady=(4, 10)
+        )
+
+    # ── Data ──────────────────────────────────────────────
     def load_users(self):
+        for row in self.tree.get_children():
+            self.tree.delete(row)
         users = self.db.query(User).all()
-        self.table.setRowCount(len(users))
+        for user in users:
+            self.tree.insert("", END, values=(
+                user.id, user.username, user.role.name.value if user.role else "-", user.full_name))
+            
+        self._count_var.set(f"{len(users)} user(s)")
 
-        for row, user in enumerate(users):
-            self.table.setItem(row, 0, QTableWidgetItem(str(user.id)))
-            self.table.setItem(row, 1, QTableWidgetItem(user.username))
-            self.table.setItem(row, 2, QTableWidgetItem(user.role))
-            
-    def open_add_user_dialog(self):
-        dialog = AddUserDialog()
-        if dialog.exec():
-            self.load_users()        
-            
-    def edit_selected_user(self):
-        selected = self.table.currentRow()
-        if selected < 0:
-            QMessageBox.warning(self, "Error", "No user selected.")
+    def _selected_user_id(self) -> int | None:
+        sel = self.tree.selection()
+        if not sel:
+            return None
+        return int(self.tree.item(sel[0])["values"][0])
+
+    # ── Actions ───────────────────────────────────────────
+    def _open_add_dialog(self):
+        from app.ui.add_user_dialog import AddUserDialog
+        dlg = AddUserDialog(self)
+        self.wait_window(dlg)
+        self.db.rollback()
+        self.load_users()
+
+    def _edit_selected(self):
+        from app.ui.add_user_dialog import AddUserDialog
+
+        uid = self._selected_user_id()
+        if uid is None:
+            Messagebox.show_warning("Please select a user to edit.", title="No Selection")
             return
 
-        user_id = int(self.table.item(selected, 0).text())
-        user = self.db.query(User).filter(User.id == user_id).first()
+        user = self.db.query(User).filter(User.id == uid).first()
         if not user:
             return
 
-        # Open dialog IN EDIT MODE
-        dialog = AddUserDialog(editing=True)
-        dialog.username_input.setText(user.username)
-        dialog.password_input.setPlaceholderText("Leave blank to keep old password")
+        dlg = AddUserDialog(self, editing=True)
+        dlg.username_input.insert(0, user.username)
+        dlg.full_name_input.insert(0, user.full_name or "")
+        dlg.password_input.configure({"show": "•"})
+        dlg.role_var.set(user.role.name.value if user.role else 'manager')
+        self.wait_window(dlg)
 
-        index = dialog.role_input.findText(user.role)
-        dialog.role_input.setCurrentIndex(index)
-
-        if not dialog.exec():
+        if not dlg.submitted:
             return
 
-        new_username = dialog.username_input.text().strip()
-        new_password = dialog.password_input.text().strip()
-        new_role = dialog.role_input.currentText()
-
-        # --- CHECK IF USERNAME EXISTS (EXCEPT CURRENT USER) ---
+        # Uniqueness check (excluding self)
         existing = (
             self.db.query(User)
-            .filter(User.username == new_username, User.id != user.id)
+            .filter(User.username == dlg.result_username, User.id != user.id)
             .first()
         )
-
         if existing:
-            QMessageBox.warning(self, "Error", "This username already exists!")
+            Messagebox.show_warning("That username is already taken.", title="Duplicate Username")
             return
 
         try:
-            # Update user
-            user.username = new_username
-            user.role = new_role
-
-            if new_password:
-                user.password_hash = hash_password(new_password)
-
+            user.username  = dlg.result_username
+            user.role      = dlg.result_role
+            user.full_name = dlg.result_full_name
+            if dlg.result_password:
+                user.password_hash = hash_password(dlg.result_password)
             self.db.commit()
-
-            QMessageBox.information(self, "Success", "User updated!")
-
-        except Exception as e:
+            Messagebox.show_info("User updated successfully!", title="Success")
+        except Exception as exc:
             self.db.rollback()
-            QMessageBox.critical(self, "Database Error", str(e))
-            return
+            Messagebox.show_error(str(exc), title="Database Error")
 
         self.load_users()
-    def delete_selected_user(self):
-        selected = self.table.currentRow()
-        if selected < 0:
-            QMessageBox.warning(self,'Error','No user selected.')      
-            return  
-        user_id = int(self.table.item(selected,0).text())
-        confirm = QMessageBox.question(
-            self,
-            'Confirm Delete',
-            'Are you sure you want to delete this user? ',
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+
+    def _delete_selected(self):
+        uid = self._selected_user_id()
+        if uid is None:
+            Messagebox.show_warning("Please select a user to delete.", title="No Selection")
+            return
+
+        confirm = Messagebox.yesno(
+            "Are you sure you want to delete this user?\nThis cannot be undone.",
+            title="Confirm Delete",
         )
-        if confirm == QMessageBox.StandardButton.Yes:
-            user = self.db.query(User).filter(User.id == user_id).first()
+        if confirm == "Yes":
+            user = self.db.query(User).filter(User.id == uid).first()
             if user:
                 self.db.delete(user)
                 self.db.commit()
