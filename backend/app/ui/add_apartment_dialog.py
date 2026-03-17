@@ -16,11 +16,11 @@ from app.db.models import Apartment, Property, City, ApartmentType, ApartmentSta
 
 
 APARTMENT_TYPES = [
-    ("Studio",      "studio"),
-    ("1 Bedroom",   "one_bed"),
-    ("2 Bedroom",   "two_bed"),
-    ("3 Bedroom",   "three_bed"),
-    ("4 Bedroom",   "four_bed"),
+    ("Studio",          "studio"),
+    ("1 Bedroom",       "one_bed"),
+    ("2 Bedroom",       "two_bed"),
+    ("3 Bedroom",       "three_bed"),
+    ("4 Bedroom",       "four_bed"),
 ]
 
 APARTMENT_STATUSES = [
@@ -51,9 +51,9 @@ class AddApartmentDialog(tb.Toplevel):
 
     # ── UI ────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        self.geometry("460x540")
+        self.geometry("460x560")
 
-        # Buttons FIRST — anchors to bottom before content expands
+        # Buttons FIRST — always visible at bottom
         btn_row = tb.Frame(self, padding=(24, 0, 24, 16))
         btn_row.pack(side=BOTTOM, fill=X)
         tb.Button(btn_row, text="Cancel", bootstyle="secondary",
@@ -63,14 +63,13 @@ class AddApartmentDialog(tb.Toplevel):
                   bootstyle="success",
                   command=self._submit).pack(side=RIGHT)
 
-        # Form content
         f = tb.Frame(self, padding=24)
         f.pack(fill=BOTH, expand=YES)
 
         tb.Label(f, text="Edit Apartment" if self.editing else "Add New Apartment",
                  font=("Georgia", 16, "bold")).pack(anchor=W, pady=(0, 16))
 
-        # Property selector
+        # Property (building) selector
         self._lbl(f, "Property / Building *")
         properties = self._load_properties()
         self.v_property = tb.StringVar()
@@ -85,7 +84,7 @@ class AddApartmentDialog(tb.Toplevel):
         )
         self._prop_combo.pack(fill=X, pady=(2, 12))
 
-        # Unit number and floor
+        # Unit number and floor side by side
         row = tb.Frame(f)
         row.pack(fill=X, pady=(0, 12))
         left = tb.Frame(row)
@@ -101,7 +100,7 @@ class AddApartmentDialog(tb.Toplevel):
         self.v_floor = tb.Entry(right, font=("Helvetica", 12))
         self.v_floor.pack(fill=X, pady=(2, 0))
 
-        # Type and rooms
+        # Type and rooms side by side
         row2 = tb.Frame(f)
         row2.pack(fill=X, pady=(0, 12))
         left2 = tb.Frame(row2)
@@ -119,7 +118,7 @@ class AddApartmentDialog(tb.Toplevel):
         self.v_rooms = tb.Entry(right2, font=("Helvetica", 12))
         self.v_rooms.pack(fill=X, pady=(2, 0))
 
-        # Rent
+        # Monthly rent
         self._lbl(f, "Monthly Rent (£) *")
         self.v_rent = tb.Entry(f, font=("Helvetica", 12))
         self.v_rent.pack(fill=X, pady=(2, 12))
@@ -143,13 +142,15 @@ class AddApartmentDialog(tb.Toplevel):
 
     def _load_properties(self) -> list[Property]:
         from sqlalchemy.orm import joinedload
-        return (
+        q = (
             self.db.query(Property)
             .options(joinedload(Property.city))
             .filter(Property.is_active == True)
-            .order_by(Property.name)
-            .all()
         )
+        city_id = getattr(self.user, "city_id", None)
+        if city_id:
+            q = q.filter(Property.city_id == city_id)
+        return q.order_by(Property.name).all()
 
     def _get_type_value(self, label: str) -> str:
         for lbl, val in APARTMENT_TYPES:
@@ -165,13 +166,14 @@ class AddApartmentDialog(tb.Toplevel):
 
     def _center(self, parent):
         self.update_idletasks()
-        w, h = 460, 540
+        w, h = 460, 520
         px = parent.winfo_rootx() + (parent.winfo_width()  - w) // 2
         py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
         self.geometry(f"{w}x{h}+{px}+{py}")
 
     # ── Populate (edit mode) ──────────────────────────────────────────────
     def _populate(self, apt: Apartment):
+        # Set property
         for label, pid in self._property_map.items():
             if pid == apt.property_id:
                 self.v_property.set(label)
@@ -185,10 +187,12 @@ class AddApartmentDialog(tb.Toplevel):
             self.v_rent.insert(0, str(apt.monthly_rent))
         if apt.description:
             self.v_desc.insert(0, apt.description)
+        # Type
         for lbl, val in APARTMENT_TYPES:
             if apt.apartment_type and apt.apartment_type.value == val:
                 self.v_type.set(lbl)
                 break
+        # Status
         for lbl, val in APARTMENT_STATUSES:
             if apt.status and apt.status.value == val:
                 self.v_status.set(lbl)
@@ -230,8 +234,7 @@ class AddApartmentDialog(tb.Toplevel):
 
         try:
             if self.editing:
-                from sqlalchemy.orm import joinedload
-                apt = self.db.query(Apartment).filter(Apartment.id == self.apartment.id).first()
+                apt = self.apartment
                 apt.property_id    = property_id
                 apt.unit_number    = unit
                 apt.floor          = floor
@@ -279,17 +282,7 @@ class AddPropertyDialog(tb.Toplevel):
         self._center(parent)
 
     def _build_ui(self):
-        self.geometry("420x400")
-
-        # Buttons FIRST — anchors to bottom
-        btn_row = tb.Frame(self, padding=(24, 0, 24, 16))
-        btn_row.pack(side=BOTTOM, fill=X)
-        tb.Button(btn_row, text="Cancel", bootstyle="secondary",
-                  command=self.destroy).pack(side=RIGHT, padx=(6, 0))
-        tb.Button(btn_row, text="Add Property", bootstyle="success",
-                  command=self._submit).pack(side=RIGHT)
-
-        # Form content
+        self.geometry("420x360")
         f = tb.Frame(self, padding=24)
         f.pack(fill=BOTH, expand=YES)
 
@@ -301,12 +294,21 @@ class AddPropertyDialog(tb.Toplevel):
                      bootstyle="secondary").pack(anchor=W)
 
         lbl("City *")
-        cities = self.db.query(City).filter(City.is_active == True).order_by(City.name).all()
-        self._city_map = {c.name: c.id for c in cities}
-        self.v_city = tb.StringVar()
-        tb.Combobox(f, textvariable=self.v_city,
-                    values=list(self._city_map.keys()),
-                    state="readonly", font=("Helvetica", 12)).pack(fill=X, pady=(2, 12))
+        city_id = getattr(self.user, "city_id", None)
+        if city_id:
+            # City-scoped user — lock to their city
+            city = self.db.query(City).filter(City.id == city_id).first()
+            self._city_map = {city.name: city.id} if city else {}
+            self.v_city = tb.StringVar(value=city.name if city else "")
+            tb.Entry(f, textvariable=self.v_city, state="readonly",
+                     font=("Helvetica", 12)).pack(fill=X, pady=(2, 12))
+        else:
+            cities = self.db.query(City).filter(City.is_active == True).order_by(City.name).all()
+            self._city_map = {c.name: c.id for c in cities}
+            self.v_city = tb.StringVar()
+            tb.Combobox(f, textvariable=self.v_city,
+                        values=list(self._city_map.keys()),
+                        state="readonly", font=("Helvetica", 12)).pack(fill=X, pady=(2, 12))
 
         lbl("Property Name *  (e.g. Paragon Bristol Block A)")
         self.v_name = tb.Entry(f, font=("Helvetica", 12))
@@ -320,9 +322,16 @@ class AddPropertyDialog(tb.Toplevel):
         self.v_postcode = tb.Entry(f, font=("Helvetica", 12))
         self.v_postcode.pack(fill=X, pady=(2, 0))
 
+        btn_row = tb.Frame(f)
+        btn_row.pack(fill=X, pady=(20, 0))
+        tb.Button(btn_row, text="Cancel", bootstyle="secondary",
+                  command=self.destroy).pack(side=RIGHT, padx=(6, 0))
+        tb.Button(btn_row, text="Add Property", bootstyle="success",
+                  command=self._submit).pack(side=RIGHT)
+
     def _center(self, parent):
         self.update_idletasks()
-        w, h = 420, 400
+        w, h = 420, 360
         px = parent.winfo_rootx() + (parent.winfo_width()  - w) // 2
         py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
         self.geometry(f"{w}x{h}+{px}+{py}")

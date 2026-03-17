@@ -63,13 +63,35 @@ class UsersPage(tb.Frame):
                       command=self._edit_selected).pack(side=LEFT, padx=(0, 6))
 
         if self.user.has_permission("user.deactivate"):
-            tb.Button(btn_bar, text="🗑  Delete", bootstyle="danger",
+            tb.Button(btn_bar, text="🚫  Deactivate", bootstyle="danger",
                       padding=(10, 6),
-                      command=self._delete_selected).pack(side=LEFT)
+                      command=self._delete_selected).pack(side=LEFT, padx=(0, 6))
+            tb.Button(btn_bar, text="♻  Reactivate", bootstyle="success",
+                      padding=(10, 6),
+                      command=self._reactivate_selected).pack(side=LEFT)
 
         tb.Separator(self, orient=HORIZONTAL).pack(fill=X, padx=20)
 
-        table_frame = tb.Frame(self, padding=(20, 12, 20, 0))
+        # Filter bar
+        filter_bar = tb.Frame(self, padding=(20, 8, 20, 0))
+        filter_bar.pack(fill=X)
+
+        tb.Label(filter_bar, text="Status:", font=("Helvetica", 11)).pack(side=LEFT)
+        self._status_filter = tb.StringVar(value="Active")
+        tb.Combobox(filter_bar, textvariable=self._status_filter,
+                    values=["Active", "Inactive", "All"],
+                    state="readonly", font=("Helvetica", 11), width=10).pack(side=LEFT, padx=(6, 16))
+        self._status_filter.trace_add("write", lambda *_: self.load_users())
+
+        tb.Label(filter_bar, text="Role:", font=("Helvetica", 11)).pack(side=LEFT)
+        self._role_filter = tb.StringVar(value="All")
+        tb.Combobox(filter_bar, textvariable=self._role_filter,
+                    values=["All", "Manager", "Location Admin", "Finance Manager",
+                            "Front Desk", "Maintenance Staff", "Tenant"],
+                    state="readonly", font=("Helvetica", 11), width=16).pack(side=LEFT, padx=(6, 0))
+        self._role_filter.trace_add("write", lambda *_: self.load_users())
+
+        table_frame = tb.Frame(self, padding=(20, 8, 20, 0))
         table_frame.pack(fill=BOTH, expand=YES)
 
         cols = ("id", "username", "full_name", "role", "city", "active")
@@ -104,15 +126,51 @@ class UsersPage(tb.Frame):
 
     # ── Data ──────────────────────────────────────────────────────────────
     def load_users(self):
+        try:
+            for row in self.tree.get_children():
+                self.tree.delete(row)
+        except Exception:
+            return
         self._refresh_db()
-        for row in self.tree.get_children():
-            self.tree.delete(row)
 
-        users = (
-            self.db.query(User)
-            .options(joinedload(User.role), joinedload(User.city))
-            .all()
-        )
+        q = self.db.query(User).options(joinedload(User.role), joinedload(User.city))
+
+        # City scoping — location admins only see users in their city
+        city_id = getattr(self.user, "city_id", None)
+        if city_id:
+            q = q.filter((User.city_id == city_id) | (User.id == self.user.id))
+
+        status_filter = self._status_filter.get()
+        if status_filter == "Active":
+            q = q.filter(User.is_active == True)
+        elif status_filter == "Inactive":
+            q = q.filter(User.is_active == False)
+
+        role_filter = self._role_filter.get()
+        if role_filter != "All":
+            role_map = {
+                "Manager":            "manager",
+                "Location Admin":     "location_admin",
+                "Finance Manager":    "finance_manager",
+                "Front Desk":         "front_desk",
+                "Maintenance Staff":  "maintenance_staff",
+                "Tenant":             "tenant",
+            }
+            from app.db.models import RoleName
+            role_val = role_map.get(role_filter)
+            if role_val:
+                from app.db.models import Role as _Role
+                role_obj = self.db.query(_Role).filter(
+                    _Role.name == RoleName(role_val)
+                ).first()
+                if role_obj:
+                    q = q.filter(User.role_id == role_obj.id)
+
+        users = q.order_by(User.is_active.desc(), User.full_name).all()
+
+        # Tag colours
+        self.tree.tag_configure("active",   foreground="#2ECC71")
+        self.tree.tag_configure("inactive", foreground="#7F8C8D")
 
         for u in users:
             role_display = (
@@ -121,8 +179,9 @@ class UsersPage(tb.Frame):
             )
             city_display = u.city.name if u.city else "All Cities"
             status       = "Active" if u.is_active else "Inactive"
+            tag          = "active" if u.is_active else "inactive"
 
-            self.tree.insert("", END, values=(
+            self.tree.insert("", END, tags=(tag,), values=(
                 u.id,
                 u.username,
                 u.full_name or "—",
@@ -215,6 +274,22 @@ class UsersPage(tb.Frame):
 
         self.load_users()
 
+    def _reactivate_selected(self):
+        uid = self._selected_user_id()
+        if uid is None:
+            Messagebox.show_warning("Please select a user to reactivate.", title="No Selection")
+            return
+        confirm = Messagebox.yesno(
+            "Reactivate this user? They will be able to log in again.",
+            title="Confirm Reactivate",
+        )
+        if confirm == "Yes":
+            u = self.db.query(User).filter(User.id == uid).first()
+            if u:
+                u.is_active = True
+                self.db.commit()
+                self.load_users()
+
     def _delete_selected(self):
         uid = self._selected_user_id()
         if uid is None:
@@ -226,12 +301,15 @@ class UsersPage(tb.Frame):
             return
 
         confirm = Messagebox.yesno(
-            "Are you sure you want to delete this user?\nThis cannot be undone.",
-            title="Confirm Delete",
+            "Deactivate this user?\n\n"
+            "Their account will be disabled and they will no longer be able to log in.\n"
+            "All their records (leases, tickets, payments) are preserved.\n\n"
+            "This cannot be undone without database access.",
+            title="Confirm Deactivate",
         )
         if confirm == "Yes":
             u = self.db.query(User).filter(User.id == uid).first()
             if u:
-                self.db.delete(u)
+                u.is_active = False
                 self.db.commit()
                 self.load_users()

@@ -144,9 +144,12 @@ class TenantsPage(tb.Frame):
 
     # ── Data ──────────────────────────────────────────────────────────────
     def load_tenants(self, *_):
+        try:
+            for row in self.tree.get_children():
+                self.tree.delete(row)
+        except Exception:
+            return  # widget destroyed, stale callback
         self._refresh_db()
-        for row in self.tree.get_children():
-            self.tree.delete(row)
 
         query       = self._search_var.get().strip()
         active_only = not self._show_inactive.get()

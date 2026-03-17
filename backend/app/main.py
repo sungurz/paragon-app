@@ -80,6 +80,13 @@ class ParagonApp(tb.Window):
             city_name     = user.city.name if user.city else None
             user_id       = user.id
             full_name     = user.full_name
+            # For tenant role — find linked tenant record via Tenant.user_id
+            from app.db.models import Tenant as _Tenant
+            tenant_id = None
+            if role_value == "tenant":
+                t = db.query(_Tenant).filter(_Tenant.user_id == user.id).first()
+                if t:
+                    tenant_id = t.id
 
             # Build a lightweight session-independent user context object
             user_ctx = _UserContext(
@@ -90,6 +97,7 @@ class ParagonApp(tb.Window):
                 permissions=permissions,
                 city_id=city_id,
                 city_name=city_name,
+                tenant_id=tenant_id,
             )
 
         finally:
@@ -124,13 +132,14 @@ class _UserContext:
     just to check who is logged in or what they are allowed to do.
     """
     def __init__(self, *, id, username, full_name, role_value,
-                 permissions, city_id, city_name):
+                 permissions, city_id, city_name, tenant_id=None):
         self.id        = id
         self.username  = username
         self.full_name = full_name
         self.role_value = role_value          # e.g. "location_admin"
         self.city_id   = city_id
         self.city_name = city_name            # e.g. "Bristol" or None (cross-city)
+        self.tenant_id = tenant_id            # set for tenant role accounts
 
         # Build permission set once
         self._permission_cache = set(

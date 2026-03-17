@@ -87,6 +87,15 @@ class AddTenantDialog(tb.Toplevel):
             command=self._submit,
         ).pack(side=RIGHT)
 
+        # Show Create Login button only in edit mode
+        if self.editing:
+            tb.Button(
+                btn_row,
+                text="🔑  Create Login",
+                bootstyle="info",
+                command=self._create_login,
+            ).pack(side=LEFT)
+
     # ── Tab 1: Personal ───────────────────────────────────────────────────
     def _build_personal_tab(self):
         f = self._tab_personal
@@ -302,6 +311,27 @@ class AddTenantDialog(tb.Toplevel):
         if self.v_ni and t.ni_number_masked:
             self.v_ni.insert(0, t.ni_number_masked)
 
+    def _create_login(self):
+        """Create a user account for this tenant and link it."""
+        if not self.tenant:
+            return
+
+        # Check if already has a login
+        from app.db.models import User as _User
+        if self.tenant.user_id:
+            existing = self.db.query(_User).filter(_User.id == self.tenant.user_id).first()
+            if existing:
+                from ttkbootstrap.dialogs import Messagebox
+                Messagebox.show_info(
+                    f"This tenant already has a login account:\n{existing.username}",
+                    title="Login Exists", parent=self
+                )
+                return
+
+        # Open dialog to get username/password
+        dlg = _CreateTenantLoginDialog(self, tenant=self.tenant, db=self.db)
+        self.wait_window(dlg)
+
     # ── Submit ────────────────────────────────────────────────────────────
     def _submit(self):
         full_name = self.v_full_name.get().strip()
@@ -408,3 +438,134 @@ class AddTenantDialog(tb.Toplevel):
         except Exception as exc:
             self.db.rollback()
             Messagebox.show_error(str(exc), title="Database Error", parent=self)
+
+
+class _CreateTenantLoginDialog(tb.Toplevel):
+    """Small dialog to set username/password for a tenant login account."""
+
+    def __init__(self, parent, tenant, db):
+        super().__init__(parent)
+        self.tenant = tenant
+        self.db     = db
+        self.title("Create Tenant Login")
+        self.resizable(False, False)
+        self.grab_set()
+        self._build_ui()
+        self._center(parent)
+
+    def _build_ui(self):
+        self.geometry("400x340")
+
+        btn_row = tb.Frame(self, padding=(20, 0, 20, 16))
+        btn_row.pack(side=BOTTOM, fill=X)
+        tb.Button(btn_row, text="Cancel", bootstyle="secondary",
+                  command=self.destroy).pack(side=RIGHT, padx=(6, 0))
+        tb.Button(btn_row, text="Create Login", bootstyle="success",
+                  command=self._submit).pack(side=RIGHT)
+
+        f = tb.Frame(self, padding=20)
+        f.pack(fill=BOTH, expand=YES)
+
+        tb.Label(f, text="Create Tenant Login",
+                 font=("Georgia", 15, "bold")).pack(anchor=W, pady=(0, 4))
+        tb.Label(f, text=f"Creating login for: {self.tenant.full_name}",
+                 font=("Helvetica", 10), bootstyle="info").pack(anchor=W, pady=(0, 16))
+
+        def lbl(t):
+            tb.Label(f, text=t, font=("Helvetica", 10),
+                     bootstyle="secondary").pack(anchor=W)
+
+        lbl("Username *")
+        self.v_username = tb.Entry(f, font=("Helvetica", 12))
+        self.v_username.insert(0, self.tenant.email.split("@")[0] if self.tenant.email else "")
+        self.v_username.pack(fill=X, pady=(2, 10))
+
+        lbl("Password *")
+        self.v_password = tb.Entry(f, font=("Helvetica", 12), show="•")
+        self.v_password.pack(fill=X, pady=(2, 10))
+
+        lbl("Confirm Password *")
+        self.v_confirm = tb.Entry(f, font=("Helvetica", 12), show="•")
+        self.v_confirm.pack(fill=X, pady=(2, 0))
+
+    def _center(self, parent):
+        self.update_idletasks()
+        w, h = 400, 340
+        px = parent.winfo_rootx() + (parent.winfo_width()  - w) // 2
+        py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{px}+{py}")
+
+    def _submit(self):
+        from ttkbootstrap.dialogs import Messagebox
+        username = self.v_username.get().strip()
+        password = self.v_password.get()
+        confirm  = self.v_confirm.get()
+
+        if not username:
+            Messagebox.show_warning("Username is required.", title="Validation", parent=self)
+            return
+        if not password:
+            Messagebox.show_warning("Password is required.", title="Validation", parent=self)
+            return
+        if password != confirm:
+            Messagebox.show_warning("Passwords do not match.", title="Validation", parent=self)
+            return
+        if len(password) < 6:
+            Messagebox.show_warning("Password must be at least 6 characters.", title="Validation", parent=self)
+            return
+
+        from app.db.models import User, Role, RoleName
+        from app.auth.security import hash_password
+
+        # Check username not taken
+        existing = self.db.query(User).filter(User.username == username).first()
+        if existing:
+            Messagebox.show_warning("That username is already taken.", title="Duplicate", parent=self)
+            return
+
+        # Get tenant role
+        tenant_role = self.db.query(Role).filter(Role.name == RoleName.TENANT).first()
+        if not tenant_role:
+            Messagebox.show_warning("Tenant role not found. Run seed_data first.", title="Error", parent=self)
+            return
+
+        try:
+            from app.db.database import SessionLocal as _SL
+            fresh_db = _SL()
+            try:
+                user = User(
+                    username=username,
+                    password_hash=hash_password(password),
+                    full_name=self.tenant.full_name,
+                    email=self.tenant.email,
+                    role_id=tenant_role.id,
+                    is_active=True,
+                )
+                fresh_db.add(user)
+                fresh_db.flush()
+
+                # Re-query tenant in THIS session and link
+                from app.db.models import Tenant as _Tenant
+                tenant_fresh = fresh_db.query(_Tenant).filter(
+                    _Tenant.id == self.tenant.id
+                ).first()
+                if tenant_fresh:
+                    tenant_fresh.user_id = user.id
+
+                fresh_db.commit()
+
+                parent_win = self.master
+                self.destroy()
+                Messagebox.show_info(
+                    f"Login created successfully!\n\n"
+                    f"Username: {username}\n"
+                    f"Password: (as entered)\n\n"
+                    f"{self.tenant.full_name} can now log in\n"
+                    f"and access their personal dashboard.",
+                    title="Login Created",
+                    parent=parent_win,
+                )
+            finally:
+                fresh_db.close()
+        except Exception as e:
+            Messagebox.show_error(str(e), title="Error", parent=self)

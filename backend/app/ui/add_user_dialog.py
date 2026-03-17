@@ -1,4 +1,9 @@
 """
+app/ui/add_user_dialog.py
+=========================
+Modal dialog for creating or editing a staff user account.
+
+Sprint 2 changes:
   - City assignment dropdown (loads live from DB).
   - All 6 correct role names with friendly display labels.
   - Roles that outrank the current user's role are hidden
@@ -30,8 +35,8 @@ ROLE_LABELS = {
 # (you can only create roles at or below your own level)
 CREATABLE_BY = {
     "manager":           ["manager", "location_admin", "front_desk",
-                          "finance_manager", "maintenance_staff"],
-    "location_admin":    ["front_desk", "finance_manager", "maintenance_staff"],
+                          "finance_manager", "maintenance_staff", "tenant"],
+    "location_admin":    ["front_desk", "finance_manager", "maintenance_staff", "tenant"],
     "front_desk":        [],
     "finance_manager":   [],
     "maintenance_staff": [],
@@ -68,7 +73,7 @@ class AddUserDialog(tb.Toplevel):
         self._build_ui()
         self._center(parent)
 
-    # ── UI 
+    # ── UI ────────────────────────────────────────────────────────────────
     def _build_ui(self):
         frame = tb.Frame(self, padding=28)
         frame.pack(fill=BOTH, expand=YES)
@@ -136,7 +141,7 @@ class AddUserDialog(tb.Toplevel):
             command=self._submit,
         ).pack(fill=X)
 
-    # ── Helpers ─
+    # ── Helpers ───────────────────────────────────────────────────────────
     def _get_allowed_roles(self) -> list[str]:
         """Return role values this actor is allowed to assign."""
         if self.actor is None:
@@ -161,7 +166,7 @@ class AddUserDialog(tb.Toplevel):
         py = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
         self.geometry(f"{w}x{h}+{px}+{py}")
 
-    # ── Submit 
+    # ── Submit ────────────────────────────────────────────────────────────
     def _submit(self):
         username  = self.username_input.get().strip()
         password  = self.password_input.get()

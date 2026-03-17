@@ -85,6 +85,7 @@ class MaintenancePage(tb.Frame):
                       bootstyle="secondary", padding=(10, 6),
                       command=self._open_update_dialog).pack(side=LEFT, padx=(0, 6))
 
+        if self.user.has_permission("maintenance.assign"):
             tb.Button(btn_bar, text="👤  Assign",
                       bootstyle="info", padding=(10, 6),
                       command=self._assign_selected).pack(side=LEFT, padx=(0, 6))
@@ -149,9 +150,12 @@ class MaintenancePage(tb.Frame):
 
     # ── Data ──────────────────────────────────────────────────────────────
     def load_tickets(self, *_):
+        try:
+            for row in self.tree.get_children():
+                self.tree.delete(row)
+        except Exception:
+            return  # widget destroyed, stale callback
         self._refresh_db()
-        for row in self.tree.get_children():
-            self.tree.delete(row)
 
         status_val   = self._status_var.get()
         priority_val = self._priority_var.get()

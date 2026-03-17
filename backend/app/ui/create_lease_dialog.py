@@ -172,13 +172,16 @@ class CreateLeaseDialog(tb.Toplevel):
             )
 
     def _load_apartments(self):
-        apts = (
+        q = (
             self.db.query(Apartment)
             .options(joinedload(Apartment.property).joinedload(Property.city))
+            .join(Property, Apartment.property_id == Property.id)
             .filter(Apartment.status == ApartmentStatus.AVAILABLE)
-            .order_by(Apartment.unit_number)
-            .all()
         )
+        city_id = getattr(self.user, "city_id", None)
+        if city_id:
+            q = q.filter(Property.city_id == city_id)
+        apts = q.order_by(Apartment.unit_number).all()
         self._apartment_map   = {}
         self._apartment_rents = {}
         for apt in apts:

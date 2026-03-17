@@ -99,7 +99,8 @@ class MainWindow(tb.Frame):
     # ── Pages ─────────────────────────────────────────────────────────────
     def _build_pages(self):
         # Home — always built
-        self._pages["home"] = self._make_home()
+        from app.ui.home_page import HomePage
+        self._pages["home"] = HomePage(self.content, user=self.user)
 
         # Settings — always built
         self._pages["settings"] = self._make_settings()
@@ -134,13 +135,17 @@ class MainWindow(tb.Frame):
             from app.ui.complaints_page import ComplaintsPage
             self._pages["complaints"] = ComplaintsPage(self.content, user=self.user)
 
-        # Reports — permission gated (Sprint 6)
-        if self.user.has_permission("report.local"):
-            self._pages["reports"] = self._make_placeholder("Reports", "Sprint 6")
+        # Reports — Sprint 6
+        if self.user.has_permission("report.local") or self.user.has_permission("report.crosscity") or self.user.has_permission("report.finance"):
+            from app.ui.reports_page import ReportsPage
+            self._pages["reports"] = ReportsPage(self.content, user=self.user)
 
-        # Tenant dashboard — permission gated (Sprint 6)
+        # Tenant dashboard — Sprint 6
         if self.user.has_permission("dashboard.view"):
-            self._pages["dashboard"] = self._make_placeholder("My Dashboard", "Sprint 6")
+            from app.ui.tenant_dashboard import TenantDashboard
+            self._pages["dashboard"] = TenantDashboard(self.content, user=self.user)
+
+
 
     def _make_home(self) -> tb.Frame:
         page = tb.Frame(self.content)
@@ -177,8 +182,10 @@ class MainWindow(tb.Frame):
         return page
 
     # ── Navigation ────────────────────────────────────────────────────────
-    # Map of page name -> load method name
     _LOAD_METHODS = {
+        "home":        "load_dashboard",
+        "dashboard":   "load_dashboard",
+        "reports":     "load_reports",
         "tenants":     "load_tenants",
         "apartments":  "load_apartments",
         "users":       "load_users",
@@ -200,7 +207,6 @@ class MainWindow(tb.Frame):
         if name in self._pages:
             page = self._pages[name]
             page.pack(fill=BOTH, expand=YES)
-            # Refresh data every time the page is shown
             load_fn = self._LOAD_METHODS.get(name)
             if load_fn and hasattr(page, load_fn):
                 try:
