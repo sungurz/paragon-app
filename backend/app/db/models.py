@@ -1,3 +1,18 @@
+"""
+Paragon Property Management System — Full Domain Model
+=======================================================
+Schema covers all modules required by the case study:
+  - Identity & RBAC
+  - Location hierarchy (City → Property → Apartment)
+  - Tenant profiles & references
+  - Lease lifecycle
+  - Finance (invoices, payments, receipts, alerts)
+  - Maintenance workflow
+  - Complaints
+  - Audit logging
+  - Notifications
+"""
+
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy import (
     Column, Integer, String, Text, DateTime, Date, Boolean,
@@ -5,9 +20,19 @@ from sqlalchemy import (
 )
 import enum
 
+
+# ─────────────────────────────────────────────
+#  Base
+# ─────────────────────────────────────────────
 class Base(DeclarativeBase):
     pass
 
+
+# ─────────────────────────────────────────────
+#  Enums
+#  Using Python enums keeps values consistent
+#  across the whole codebase.
+# ─────────────────────────────────────────────
 
 class RoleName(str, enum.Enum):
     TENANT             = "tenant"
@@ -95,7 +120,11 @@ class NotificationType(str, enum.Enum):
     COMPLAINT_UPDATE   = "complaint_update"
     GENERAL         = "general"
 
+
+# ─────────────────────────────────────────────
 #  IDENTITY & ACCESS CONTROL
+# ─────────────────────────────────────────────
+
 class Role(Base):
     """
     The 6 system roles defined by the case study.
@@ -149,8 +178,10 @@ class User(Base):
     notifications  = relationship("Notification", back_populates="user")
 
 
+# ─────────────────────────────────────────────
 #  LOCATION HIERARCHY
 #  City → Property → Apartment
+# ─────────────────────────────────────────────
 
 class City(Base):
     """
@@ -215,8 +246,12 @@ class Apartment(Base):
     property            = relationship("Property", back_populates="apartments")
     leases              = relationship("LeaseAgreement", back_populates="apartment")
     maintenance_tickets = relationship("MaintenanceTicket", back_populates="apartment")
-    
+
+
+# ─────────────────────────────────────────────
 #  TENANT
+# ─────────────────────────────────────────────
+
 class Tenant(Base):
     """
     Full tenant profile as required by the case study.
@@ -254,6 +289,7 @@ class Tenant(Base):
     preferred_lease_months   = Column(Integer)   # e.g. 6, 12, 24
     additional_requirements  = Column(Text)
 
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=True)  # portal login
     is_active  = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -279,7 +315,7 @@ class TenantReference(Base):
     tenant_id      = Column(Integer, ForeignKey("tenants.id"), nullable=False)
     reference_type = Column(String(50))     # e.g. "Previous Landlord", "Employer", "Personal"
     full_name      = Column(String(100), nullable=False)
-    relationship_type   = Column(String(100))    # e.g. "Former Landlord"
+    relation_to_tenant = Column(String(100))  # e.g. "Former Landlord"
     phone          = Column(String(20))
     email          = Column(String(100))
     notes          = Column(Text)
@@ -288,11 +324,17 @@ class TenantReference(Base):
     # relationships
     tenant = relationship("Tenant", back_populates="references")
 
+
+# ─────────────────────────────────────────────
 #  LEASE
+# ─────────────────────────────────────────────
+
 class LeaseAgreement(Base):
     """
     The contract linking one tenant to one apartment.
-    An apartment can only have one ACTIVE lease at a time 
+    An apartment can only have one ACTIVE lease at a time —
+    this is enforced in the service layer, not the DB constraint,
+    so historical leases can coexist.
     agreed_rent may differ from apartment.monthly_rent (negotiated rate).
     """
     __tablename__ = "lease_agreements"
@@ -347,7 +389,11 @@ class LeaseTerminationRequest(Base):
     # relationships
     lease = relationship("LeaseAgreement", back_populates="termination_requests")
 
+
+# ─────────────────────────────────────────────
 #  FINANCE
+# ─────────────────────────────────────────────
+
 class Invoice(Base):
     """
     Monthly invoice generated for an active lease.
@@ -438,7 +484,12 @@ class LatePaymentAlert(Base):
 
     # relationships
     invoice = relationship("Invoice", back_populates="late_payment_alerts")
+
+
+# ─────────────────────────────────────────────
 #  MAINTENANCE
+# ─────────────────────────────────────────────
+
 class MaintenanceTicket(Base):
     """
     Full maintenance workflow as required:
@@ -502,7 +553,10 @@ class MaintenanceUpdate(Base):
     ticket = relationship("MaintenanceTicket", back_populates="updates")
 
 
+# ─────────────────────────────────────────────
 #  COMPLAINTS
+# ─────────────────────────────────────────────
+
 class Complaint(Base):
     """
     Raised by front-desk on behalf of tenant, or directly by tenant.
@@ -529,7 +583,12 @@ class Complaint(Base):
     tenant             = relationship("Tenant", back_populates="complaints")
     maintenance_ticket = relationship("MaintenanceTicket", back_populates="complaint",
                                       foreign_keys="MaintenanceTicket.complaint_id")
+
+
+# ─────────────────────────────────────────────
 #  NOTIFICATIONS
+# ─────────────────────────────────────────────
+
 class Notification(Base):
     """
     In-app notifications for both staff users and tenants.
@@ -552,7 +611,11 @@ class Notification(Base):
     user   = relationship("User", back_populates="notifications")
     tenant = relationship("Tenant", back_populates="notifications")
 
+
+# ─────────────────────────────────────────────
 #  AUDIT LOG
+# ─────────────────────────────────────────────
+
 class AuditLog(Base):
     """
     Immutable record of sensitive changes.
@@ -563,13 +626,17 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id           = Column(Integer, primary_key=True)
-    user_id      = Column(Integer, ForeignKey("users.id"), nullable=True)  # NULL = system action
-    action       = Column(String(100), nullable=False)   # e.g. "role_changed", "lease_created"
-    target_table = Column(String(100))                   # e.g. "users", "lease_agreements"
-    target_id    = Column(Integer)                       # PK of the changed record
-    before_value = Column(Text)                          # JSON snapshot before change
-    after_value  = Column(Text)                          # JSON snapshot after change
-    ip_address   = Column(String(45))                    # IPv4 or IPv6
+    user_id      = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username     = Column(String(100))                   # denormalised for display
+    action       = Column(String(100), nullable=False)
+    entity       = Column(String(100))                   # e.g. "lease", "tenant"
+    entity_id    = Column(Integer)
+    detail       = Column(Text)                          # human-readable summary
+    target_table = Column(String(100))
+    target_id    = Column(Integer)
+    before_value = Column(Text)
+    after_value  = Column(Text)
+    ip_address   = Column(String(45))
     created_at   = Column(DateTime, server_default=func.now())
 
     # relationships

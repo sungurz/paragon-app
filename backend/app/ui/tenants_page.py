@@ -76,6 +76,9 @@ class TenantsPage(tb.Frame):
             tb.Button(btn_bar, text="✂  End Lease",
                       bootstyle="danger", padding=(10, 6),
                       command=self._open_termination_dialog).pack(side=LEFT, padx=(0, 6))
+            tb.Button(btn_bar, text="⏳  Pending Requests",
+                      bootstyle="warning", padding=(10, 6),
+                      command=self._open_pending_terminations).pack(side=LEFT, padx=(0, 6))
 
         if self.user.has_permission("tenant.archive"):
             tb.Button(btn_bar, text="🗃  Archive",
@@ -237,6 +240,12 @@ class TenantsPage(tb.Frame):
         tid = self._selected_tenant_id()
         from app.ui.create_lease_dialog import CreateLeaseDialog
         dlg = CreateLeaseDialog(self, user=self.user, preselected_tenant_id=tid)
+        self.wait_window(dlg)
+        self.load_tenants()
+
+    def _open_pending_terminations(self):
+        from app.ui.pending_terminations_panel import PendingTerminationsPanel
+        dlg = PendingTerminationsPanel(self, user=self.user)
         self.wait_window(dlg)
         self.load_tenants()
 

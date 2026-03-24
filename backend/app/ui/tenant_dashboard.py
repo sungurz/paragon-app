@@ -117,19 +117,33 @@ class TenantDashboard(tb.Frame):
             apt  = lease.apartment
             prop = apt.property if apt else None
 
+            from datetime import date as _date
+            days_left = (lease.end_date - _date.today()).days if lease.end_date else 0
+
             info = [
                 ("Property",    prop.name if prop else "—"),
                 ("Unit",        f"Unit {apt.unit_number}" if apt else "—"),
                 ("Monthly Rent",f"£{lease.agreed_rent:,.2f}"),
-                ("Start Date",  lease.start_date.strftime("%d %b %Y") if lease.start_date else "—"),
-                ("End Date",    lease.end_date.strftime("%d %b %Y") if lease.end_date else "—"),
+                ("Deposit",     f"£{lease.deposit:,.2f}" if lease.deposit else "—"),
+                ("Lease Start", lease.start_date.strftime("%d %b %Y") if lease.start_date else "—"),
+                ("Lease End",   lease.end_date.strftime("%d %b %Y") if lease.end_date else "—"),
+                ("Days Remaining", f"{days_left} days" if days_left > 0 else "Expired"),
             ]
             for label, value in info:
                 row = tb.Frame(lease_frame)
                 row.pack(fill=X, pady=2)
                 tb.Label(row, text=label, font=("Helvetica", 10),
-                         bootstyle="secondary", width=14).pack(side=LEFT)
+                         bootstyle="secondary", width=16).pack(side=LEFT)
                 tb.Label(row, text=value, font=("Helvetica", 11)).pack(side=LEFT)
+
+            # Request early termination button
+            tb.Separator(lease_frame, orient=HORIZONTAL).pack(fill=X, pady=(10, 8))
+            tb.Label(lease_frame,
+                     text="Need to leave early? You can request early termination (1 month notice, 5% penalty applies).",
+                     font=("Helvetica", 9), bootstyle="secondary", wraplength=520, justify=LEFT).pack(anchor=W)
+            tb.Button(lease_frame, text="📋  Request Early Termination",
+                      bootstyle="danger-outline", padding=(10, 5),
+                      command=self._request_termination).pack(anchor=W, pady=(6, 0))
         else:
             tb.Label(self._tab_overview, text="No active lease found.",
                      bootstyle="warning").pack(anchor=W, pady=8)
@@ -157,6 +171,16 @@ class TenantDashboard(tb.Frame):
                 tb.Label(alert_card,
                          text=f"Due: {inv.due_date.strftime('%d %b %Y') if inv.due_date else '—'}",
                          font=("Helvetica", 10), bootstyle="secondary").pack(anchor=W)
+
+        # Balance summary
+        if self.tenant_id:
+            invoices = self.db.query(Invoice).filter(Invoice.tenant_id == self.tenant_id).all()
+            outstanding = sum(i.amount for i in invoices
+                              if i.status in (InvoiceStatus.ISSUED, InvoiceStatus.OVERDUE))
+            if outstanding > 0:
+                tb.Label(self._tab_overview,
+                         text=f"Outstanding balance: £{float(outstanding):,.2f}",
+                         font=("Helvetica", 11, "bold"), bootstyle="warning").pack(anchor=W, pady=(8, 0))
 
         # Quick actions
         tb.Label(self._tab_overview, text="Quick Actions",
@@ -335,12 +359,12 @@ class TenantDashboard(tb.Frame):
         else:
             late_data = {}
             for inv in late_invs:
-                apt = None
-                if inv.lease:
-                    apt = inv.lease.apartment
-                label = apt.unit_number if apt else inv.invoice_number
-                late_data[label] = late_data.get(label, 0.0) + float(inv.amount)
-            self._draw_bar_chart(self._tab_charts, late_data, "#E74C3C", "Unit", "Overdue (£)")
+                # Group by property name as required
+                prop_name = "Unknown Property"
+                if inv.lease and inv.lease.apartment and inv.lease.apartment.property:
+                    prop_name = inv.lease.apartment.property.name
+                late_data[prop_name] = late_data.get(prop_name, 0.0) + float(inv.amount)
+            self._draw_bar_chart(self._tab_charts, late_data, "#E74C3C", "Property", "Overdue (£)")
 
         # vs Neighbours comparison
         tb.Label(self._tab_charts, text="My Payments vs Neighbours",
@@ -428,12 +452,13 @@ class TenantDashboard(tb.Frame):
         for w in self._tab_maint.winfo_children():
             w.destroy()
 
-        tb.Label(self._tab_maint, text="My Maintenance Requests",
-                 font=("Georgia", 14, "bold")).pack(anchor=W, pady=(0, 8))
-
-        tb.Button(self._tab_maint, text="＋  Report a Repair",
+        header = tb.Frame(self._tab_maint)
+        header.pack(fill=X, pady=(0, 16))
+        tb.Label(header, text="My Repair Requests",
+                 font=("Georgia", 14, "bold")).pack(side=LEFT)
+        tb.Button(header, text="＋  Report a Repair",
                   bootstyle="warning", padding=(10, 5),
-                  command=self._open_maintenance_dialog).pack(anchor=W, pady=(0, 12))
+                  command=self._open_maintenance_dialog).pack(side=RIGHT)
 
         tickets = (
             self.db.query(MaintenanceTicket)
@@ -443,57 +468,65 @@ class TenantDashboard(tb.Frame):
         )
 
         if not tickets:
-            tb.Label(self._tab_maint, text="No maintenance requests yet.",
-                     bootstyle="secondary").pack(anchor=W)
+            empty = tb.Frame(self._tab_maint, padding=24)
+            empty.pack(fill=X)
+            tb.Label(empty, text="No repair requests yet.",
+                     font=("Helvetica", 12), bootstyle="secondary").pack()
+            tb.Label(empty, text="Click \u201c+ Report a Repair\u201d to log an issue.",
+                     font=("Helvetica", 10), bootstyle="secondary").pack()
             return
 
-        tbl = tb.Frame(self._tab_maint)
-        tbl.pack(fill=BOTH, expand=YES)
-
-        cols = ("id", "title", "priority", "status", "created")
-        tree = tb.Treeview(tbl, columns=cols, show="headings",
-                           bootstyle="dark", selectmode="browse", height=8)
-        col_cfg = [
-            ("id",       "ID",        50,  CENTER),
-            ("title",    "Title",     250, W),
-            ("priority", "Priority",  90,  CENTER),
-            ("status",   "Status",    130, CENTER),
-            ("created",  "Raised",    110, CENTER),
-        ]
-        for cid, heading, width, anchor in col_cfg:
-            tree.heading(cid, text=heading, anchor=anchor)
-            tree.column(cid, width=width, anchor=anchor)
-
-        PRIO_COLORS = {"urgent":"#E74C3C","high":"#E67E22","medium":"#3498DB","low":"#7F8C8D"}
-        for tag, color in PRIO_COLORS.items():
-            tree.tag_configure(tag, foreground=color)
+        STATUS_COLORS = {
+            "new":          ("#E74C3C", "New"),
+            "triaged":      ("#E67E22", "Being Reviewed"),
+            "scheduled":    ("#3498DB", "Scheduled"),
+            "in_progress":  ("#2ECC71", "In Progress"),
+            "waiting_parts":("#9B59B6", "Waiting for Parts"),
+            "resolved":     ("#27AE60", "Resolved"),
+            "closed":       ("#7F8C8D", "Closed"),
+        }
+        PRIO_LABELS = {"urgent":"Urgent","high":"High","medium":"Medium","low":"Low"}
 
         for t in tickets:
+            status_val = t.status.value if t.status else "new"
+            color, status_label = STATUS_COLORS.get(status_val, ("#7F8C8D", status_val.title()))
             prio = t.priority.value if t.priority else "medium"
-            tree.insert("", END, tags=(prio,), values=(
-                t.id,
-                t.title,
-                prio.title(),
-                t.status.value.replace("_", " ").title() if t.status else "—",
-                t.created_at.strftime("%d %b %Y") if t.created_at else "—",
-            ))
 
-        sb = tb.Scrollbar(tbl, orient=VERTICAL, command=tree.yview, bootstyle="round-dark")
-        tree.configure(yscrollcommand=sb.set)
-        tree.pack(side=LEFT, fill=BOTH, expand=YES)
-        sb.pack(side=RIGHT, fill=Y)
+            card = tb.Frame(self._tab_maint, padding=(12, 10))
+            card.pack(fill=X, pady=(0, 8))
 
-        # Progress detail on double click
-        def show_progress(_):
-            sel = tree.selection()
-            if not sel:
-                return
-            tid = int(tree.item(sel[0])["values"][0])
-            self._show_ticket_progress(tid)
+            # Left colour bar
+            bar = tb.Frame(card, width=4)
+            bar.pack(side=LEFT, fill=Y, padx=(0, 12))
+            bar.pack_propagate(False)
 
-        tree.bind("<Double-1>", show_progress)
-        tb.Label(self._tab_maint, text="Double-click a ticket to view progress",
-                 font=("Helvetica", 9), bootstyle="secondary").pack(anchor=W, pady=(4, 0))
+            # Content
+            content_frame = tb.Frame(card)
+            content_frame.pack(side=LEFT, fill=X, expand=YES)
+
+            # Title row
+            title_row = tb.Frame(content_frame)
+            title_row.pack(fill=X)
+            tb.Label(title_row, text=t.title,
+                     font=("Helvetica", 12, "bold")).pack(side=LEFT)
+            tb.Label(title_row, text=status_label,
+                     font=("Helvetica", 10), foreground=color).pack(side=RIGHT)
+
+            # Sub info row
+            sub_row = tb.Frame(content_frame)
+            sub_row.pack(fill=X, pady=(2, 0))
+            date_str = t.created_at.strftime("%d %b %Y") if t.created_at else ""
+            tb.Label(sub_row,
+                     text=f"Priority: {PRIO_LABELS.get(prio, prio.title())}  \u2022  Reported: {date_str}",
+                     font=("Helvetica", 10), bootstyle="secondary").pack(side=LEFT)
+
+            # View progress button
+            tid = t.id
+            tb.Button(sub_row, text="View Progress ›",
+                      bootstyle="link", padding=(4, 2),
+                      command=lambda x=tid: self._show_ticket_progress(x)).pack(side=RIGHT)
+
+            tb.Separator(self._tab_maint, orient=HORIZONTAL).pack(fill=X)
 
     def _show_ticket_progress(self, ticket_id: int):
         from app.db.models import MaintenanceUpdate, User
@@ -511,11 +544,33 @@ class TenantDashboard(tb.Frame):
         f = tb.Frame(win, padding=20)
         f.pack(fill=BOTH, expand=YES)
 
-        tb.Label(f, text=f"#{ticket.id} — {ticket.title}",
+        tb.Label(f, text=ticket.title,
                  font=("Georgia", 14, "bold")).pack(anchor=W, pady=(0, 4))
-        tb.Label(f, text=f"Status: {ticket.status.value.replace('_',' ').title()}  |  "
-                          f"Priority: {ticket.priority.value.title()}",
-                 font=("Helvetica", 10), bootstyle="info").pack(anchor=W, pady=(0, 12))
+
+        status_label = ticket.status.value.replace("_"," ").title() if ticket.status else "—"
+        priority_label = ticket.priority.value.title() if ticket.priority else "—"
+        tb.Label(f, text=f"Status: {status_label}   Priority: {priority_label}",
+                 font=("Helvetica", 10), bootstyle="info").pack(anchor=W)
+
+        # Show scheduled date if set
+        if hasattr(ticket, "scheduled_date") and ticket.scheduled_date:
+            tb.Label(f,
+                     text=f"Scheduled: {ticket.scheduled_date.strftime('%d %b %Y %H:%M')}",
+                     font=("Helvetica", 10), bootstyle="warning").pack(anchor=W)
+
+        # Show time spent if set
+        if hasattr(ticket, "time_taken_hours") and ticket.time_taken_hours:
+            tb.Label(f,
+                     text=f"Time spent: {ticket.time_taken_hours} hour(s)",
+                     font=("Helvetica", 10), bootstyle="secondary").pack(anchor=W)
+
+        # Show cost if set
+        if hasattr(ticket, "material_cost") and ticket.material_cost:
+            tb.Label(f,
+                     text=f"Material cost: £{ticket.material_cost:,.2f}",
+                     font=("Helvetica", 10), bootstyle="secondary").pack(anchor=W)
+
+        tb.Label(f, text="", font=("Helvetica", 6)).pack()
 
         tb.Label(f, text="Progress Timeline",
                  font=("Georgia", 12, "bold")).pack(anchor=W, pady=(0, 6))
@@ -551,12 +606,13 @@ class TenantDashboard(tb.Frame):
         for w in self._tab_complaints.winfo_children():
             w.destroy()
 
-        tb.Label(self._tab_complaints, text="My Complaints",
-                 font=("Georgia", 14, "bold")).pack(anchor=W, pady=(0, 8))
-
-        tb.Button(self._tab_complaints, text="＋  Submit Complaint",
+        header = tb.Frame(self._tab_complaints)
+        header.pack(fill=X, pady=(0, 16))
+        tb.Label(header, text="My Complaints",
+                 font=("Georgia", 14, "bold")).pack(side=LEFT)
+        tb.Button(header, text="＋  Submit Complaint",
                   bootstyle="secondary", padding=(10, 5),
-                  command=self._open_complaint_dialog).pack(anchor=W, pady=(0, 12))
+                  command=self._open_complaint_dialog).pack(side=RIGHT)
 
         complaints = (
             self.db.query(Complaint)
@@ -566,46 +622,73 @@ class TenantDashboard(tb.Frame):
         )
 
         if not complaints:
-            tb.Label(self._tab_complaints, text="No complaints submitted yet.",
-                     bootstyle="secondary").pack(anchor=W)
+            empty = tb.Frame(self._tab_complaints, padding=24)
+            empty.pack(fill=X)
+            tb.Label(empty, text="No complaints submitted yet.",
+                     font=("Helvetica", 12), bootstyle="secondary").pack()
+            tb.Label(empty, text="Use \u201c+ Submit Complaint\u201d if you have a concern.",
+                     font=("Helvetica", 10), bootstyle="secondary").pack()
             return
 
-        tbl = tb.Frame(self._tab_complaints)
-        tbl.pack(fill=BOTH, expand=YES)
-
-        cols = ("id", "category", "subject", "status")
-        tree = tb.Treeview(tbl, columns=cols, show="headings",
-                           bootstyle="dark", selectmode="browse", height=8)
-        col_cfg = [
-            ("id",       "ID",        50,  CENTER),
-            ("category", "Category",  120, CENTER),
-            ("subject",  "Subject",   280, W),
-            ("status",   "Status",    120, CENTER),
-        ]
-        for cid, heading, width, anchor in col_cfg:
-            tree.heading(cid, text=heading, anchor=anchor)
-            tree.column(cid, width=width, anchor=anchor)
-
-        tree.tag_configure("open",         foreground="#E74C3C")
-        tree.tag_configure("under_review", foreground="#E67E22")
-        tree.tag_configure("resolved",     foreground="#2ECC71")
-        tree.tag_configure("closed",       foreground="#7F8C8D")
+        STATUS_COLORS = {
+            "open":         ("#E74C3C", "Open"),
+            "under_review": ("#E67E22", "Under Review"),
+            "resolved":     ("#2ECC71", "Resolved"),
+            "closed":       ("#7F8C8D", "Closed"),
+        }
 
         for c in complaints:
-            tag = c.status.value if c.status else "open"
-            tree.insert("", END, tags=(tag,), values=(
-                c.id,
-                c.category.value.replace("_", " ").title() if c.category else "—",
-                c.subject,
-                c.status.value.replace("_", " ").title() if c.status else "—",
-            ))
+            status_val = c.status.value if c.status else "open"
+            color, status_label = STATUS_COLORS.get(status_val, ("#7F8C8D", "Unknown"))
+            cat = c.category.value.replace("_", " ").title() if c.category else "General"
 
-        sb = tb.Scrollbar(tbl, orient=VERTICAL, command=tree.yview, bootstyle="round-dark")
-        tree.configure(yscrollcommand=sb.set)
-        tree.pack(side=LEFT, fill=BOTH, expand=YES)
-        sb.pack(side=RIGHT, fill=Y)
+            card = tb.Frame(self._tab_complaints, padding=(12, 10))
+            card.pack(fill=X, pady=(0, 8))
+
+            bar = tb.Frame(card, width=4)
+            bar.pack(side=LEFT, fill=Y, padx=(0, 12))
+            bar.pack_propagate(False)
+
+            content_frame = tb.Frame(card)
+            content_frame.pack(side=LEFT, fill=X, expand=YES)
+
+            title_row = tb.Frame(content_frame)
+            title_row.pack(fill=X)
+            tb.Label(title_row, text=c.subject,
+                     font=("Helvetica", 12, "bold")).pack(side=LEFT)
+            tb.Label(title_row, text=status_label,
+                     font=("Helvetica", 10), foreground=color).pack(side=RIGHT)
+
+            sub_row = tb.Frame(content_frame)
+            sub_row.pack(fill=X, pady=(2, 0))
+            tb.Label(sub_row, text=f"Category: {cat}",
+                     font=("Helvetica", 10), bootstyle="secondary").pack(side=LEFT)
+
+            if c.resolution_notes and status_val in ("resolved", "closed"):
+                res_row = tb.Frame(content_frame)
+                res_row.pack(fill=X, pady=(2, 0))
+                tb.Label(res_row, text=f"Resolution: {c.resolution_notes}",
+                         font=("Helvetica", 10), bootstyle="success",
+                         wraplength=500, justify=LEFT).pack(side=LEFT)
+
+            tb.Separator(self._tab_complaints, orient=HORIZONTAL).pack(fill=X)
 
     # ── Dialogs ─────────────────────────────────────────────────────────────
+    def _request_termination(self):
+        if not self.tenant_id:
+            Messagebox.show_warning("Account not linked to a tenant record.", title="Error")
+            return
+        lease = self._get_active_lease()
+        if not lease:
+            Messagebox.show_warning("No active lease found.", title="No Lease")
+            return
+        from app.ui.tenant_termination_request_dialog import TenantTerminationRequestDialog
+        dlg = TenantTerminationRequestDialog(self, user=self.user,
+                                              tenant_id=self.tenant_id)
+        self.wait_window(dlg)
+        self._refresh_db()
+        self._load_overview()
+
     def _open_payment_dialog(self, invoice_id: int | None = None):
         dlg = _TenantPaymentDialog(self, tenant_id=self.tenant_id,
                                    db=self.db, invoice_id=invoice_id)

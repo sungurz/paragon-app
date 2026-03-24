@@ -85,8 +85,8 @@ class TicketDetailPanel(tb.Toplevel):
             right = tb.Frame(row)
             right.pack(side=RIGHT, fill=X, expand=YES)
 
-            tb.Label(left, text="New Status", font=("Helvetica", 10),
-                     bootstyle="secondary").pack(anchor=W)
+            tb.Label(left, text="New Status *  (change to update)",
+                     font=("Helvetica", 10), bootstyle="secondary").pack(anchor=W)
             self.v_status = tb.StringVar()
             tb.Combobox(left, textvariable=self.v_status,
                         values=[s.replace("_", " ").title() for s in STATUS_OPTIONS],
@@ -97,9 +97,27 @@ class TicketDetailPanel(tb.Toplevel):
             self.v_cost = tb.Entry(right, font=("Helvetica", 11))
             self.v_cost.pack(fill=X, pady=(2, 0))
 
+            # Scheduled date + time spent row
+            row1b = tb.Frame(f)
+            row1b.pack(fill=X, pady=(0, 8))
+            left1b = tb.Frame(row1b)
+            left1b.pack(side=LEFT, fill=X, expand=YES, padx=(0, 8))
+            right1b = tb.Frame(row1b)
+            right1b.pack(side=RIGHT, fill=X, expand=YES)
+
+            tb.Label(left1b, text="Scheduled Date (DD/MM/YYYY)",
+                     font=("Helvetica", 10), bootstyle="secondary").pack(anchor=W)
+            self.v_scheduled = tb.Entry(left1b, font=("Helvetica", 11))
+            self.v_scheduled.pack(fill=X, pady=(2, 0))
+
+            tb.Label(right1b, text="Time Spent (hours)",
+                     font=("Helvetica", 10), bootstyle="secondary").pack(anchor=W)
+            self.v_hours = tb.Entry(right1b, font=("Helvetica", 11))
+            self.v_hours.pack(fill=X, pady=(2, 0))
+
             row2 = tb.Frame(f)
             row2.pack(fill=X, pady=(0, 8))
-            tb.Label(row2, text="Note", font=("Helvetica", 10),
+            tb.Label(row2, text="Note / Update for Tenant", font=("Helvetica", 10),
                      bootstyle="secondary").pack(anchor=W)
             self.v_note = tb.Entry(row2, font=("Helvetica", 11))
             self.v_note.pack(fill=X, pady=(2, 0))
@@ -115,7 +133,7 @@ class TicketDetailPanel(tb.Toplevel):
 
         cols = ("date", "by", "old", "new", "note")
         self.upd_tree = tb.Treeview(tbl_frame, columns=cols, show="headings",
-                                     bootstyle="dark", height=6)
+                                     bootstyle="dark", height=5)
         col_cfg = [
             ("date", "Date",       120, CENTER),
             ("by",   "By",         120, W),
@@ -158,6 +176,22 @@ class TicketDetailPanel(tb.Toplevel):
         if hasattr(self, "v_status") and ticket.status:
             self.v_status.set(ticket.status.value.replace("_", " ").title())
 
+        # Pre-populate existing ticket values so staff can see what's saved
+        if hasattr(self, "v_cost"):
+            self.v_cost.delete(0, END)
+            if ticket.material_cost:
+                self.v_cost.insert(0, str(ticket.material_cost))
+
+        if hasattr(self, "v_hours"):
+            self.v_hours.delete(0, END)
+            if ticket.time_taken_hours:
+                self.v_hours.insert(0, str(ticket.time_taken_hours))
+
+        if hasattr(self, "v_scheduled"):
+            self.v_scheduled.delete(0, END)
+            if ticket.scheduled_date:
+                self.v_scheduled.insert(0, ticket.scheduled_date.strftime("%d/%m/%Y"))
+
         # Load updates timeline
         updates = (
             self.db.query(MaintenanceUpdate)
@@ -177,6 +211,23 @@ class TicketDetailPanel(tb.Toplevel):
                 upd.new_status.value.replace("_", " ").title() if upd.new_status else "—",
                 upd.note or "—",
             ))
+
+    def _refresh_after_save(self):
+        """Refresh ticket info and history after a successful save."""
+        try:
+            self.db.close()
+        except Exception:
+            pass
+        from app.db.database import SessionLocal as _SL
+        self.db = _SL()
+        # Clear the update history tree
+        for row in self.upd_tree.get_children():
+            self.upd_tree.delete(row)
+        # Clear the note field
+        if hasattr(self, "v_note"):
+            self.v_note.delete(0, END)
+        # Reload everything
+        self._load_ticket()
 
     def _center(self, parent):
         self.update_idletasks()
@@ -199,6 +250,29 @@ class TicketDetailPanel(tb.Toplevel):
                 Messagebox.show_warning("Invalid cost value.", title="Validation", parent=self)
                 return
 
+        # Scheduled date
+        scheduled_dt = None
+        sched_str = getattr(self, "v_scheduled", None)
+        sched_str = sched_str.get().strip() if sched_str else ""
+        if sched_str:
+            try:
+                from datetime import datetime as _dt
+                scheduled_dt = _dt.strptime(sched_str, "%d/%m/%Y")
+            except ValueError:
+                Messagebox.show_warning("Invalid scheduled date. Use DD/MM/YYYY.", title="Validation", parent=self)
+                return
+
+        # Time spent
+        time_hours = None
+        hours_str = getattr(self, "v_hours", None)
+        hours_str = hours_str.get().strip() if hours_str else ""
+        if hours_str:
+            try:
+                time_hours = float(hours_str)
+            except ValueError:
+                Messagebox.show_warning("Invalid hours value.", title="Validation", parent=self)
+                return
+
         ok, err = update_status(
             self.db,
             self.ticket_id,
@@ -206,6 +280,8 @@ class TicketDetailPanel(tb.Toplevel):
             note=note or None,
             updated_by_user_id=self.user.id,
             material_cost=actual_cost,
+            scheduled_date=scheduled_dt,
+            time_taken_hours=time_hours,
         )
         if err:
             Messagebox.show_warning(err, title="Error", parent=self)
@@ -286,6 +362,23 @@ class AssignDialog(tb.Toplevel):
         if not self._staff_map:
             tb.Label(f, text="No maintenance staff found.",
                      font=("Helvetica", 10), bootstyle="warning").pack(anchor=W, pady=(8, 0))
+
+    def _refresh_after_save(self):
+        """Refresh ticket info and history after a successful save."""
+        try:
+            self.db.close()
+        except Exception:
+            pass
+        from app.db.database import SessionLocal as _SL
+        self.db = _SL()
+        # Clear the update history tree
+        for row in self.upd_tree.get_children():
+            self.upd_tree.delete(row)
+        # Clear the note field
+        if hasattr(self, "v_note"):
+            self.v_note.delete(0, END)
+        # Reload everything
+        self._load_ticket()
 
     def _center(self, parent):
         self.update_idletasks()

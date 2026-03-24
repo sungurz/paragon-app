@@ -102,6 +102,14 @@ def create_ticket(
     db.add(ticket)
     db.commit()
     db.refresh(ticket)
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        log_action(db, action=AuditAction.TICKET_CREATE,
+                   entity="ticket", entity_id=ticket.id,
+                   user_id=raised_by_user_id,
+                   detail=f"Title: {title} | Priority: {priority} | Apt: {apartment_id}")
+    except Exception:
+        pass
     return ticket, ""
 
 
@@ -114,6 +122,7 @@ def update_status(
     updated_by_user_id: int | None = None,
     material_cost: Decimal | None = None,
     time_taken_hours: float | None = None,
+    scheduled_date=None,
 ) -> tuple[bool, str]:
     ticket = db.query(MaintenanceTicket).filter(MaintenanceTicket.id == ticket_id).first()
     if not ticket:
@@ -131,6 +140,8 @@ def update_status(
         ticket.material_cost = material_cost
     if time_taken_hours is not None:
         ticket.time_taken_hours = time_taken_hours
+    if scheduled_date is not None:
+        ticket.scheduled_date = scheduled_date
     if status in (MaintenanceStatus.RESOLVED, MaintenanceStatus.CLOSED):
         ticket.completed_at = datetime.now()
 
@@ -155,6 +166,25 @@ def update_status(
         ))
 
     db.commit()
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        old_label = old_status.value.replace("_", " ").title() if old_status else "—"
+        new_label = status.value.replace("_", " ").title()
+        detail = f"Ticket #{ticket_id}: {old_label} → {new_label}"
+        if material_cost is not None:
+            detail += f" | Cost: £{material_cost:,.2f}"
+        if time_taken_hours is not None:
+            detail += f" | Time: {time_taken_hours}h"
+        if scheduled_date is not None:
+            detail += f" | Scheduled: {scheduled_date.strftime('%d %b %Y') if hasattr(scheduled_date,'strftime') else scheduled_date}"
+        if note:
+            detail += f" | Note: {note}"
+        log_action(db, action=AuditAction.TICKET_UPDATE,
+                   user_id=updated_by_user_id,
+                   entity="ticket", entity_id=ticket_id,
+                   detail=detail)
+    except Exception:
+        pass
     return True, ""
 
 
@@ -182,68 +212,15 @@ def assign_ticket(
         ))
 
     db.commit()
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        from app.db.models import User as _User
+        assignee = db.query(_User).filter(_User.id == assigned_to_user_id).first()
+        log_action(db, action=AuditAction.TICKET_ASSIGN,
+                   user_id=updated_by_user_id,
+                   entity="ticket", entity_id=ticket_id,
+                   detail=f"Ticket #{ticket_id} assigned to "
+                          f"{assignee.full_name if assignee else assigned_to_user_id}")
+    except Exception:
+        pass
     return True, ""
-
-
-def cancel_open_tickets_for_apartment(db: Session, apartment_id: int) -> int:
-    """Cancel all open tickets for an apartment (called on lease termination).
-    Returns count cancelled."""
-    from datetime import datetime
-    open_statuses = [
-        MaintenanceStatus.NEW, MaintenanceStatus.TRIAGED,
-        MaintenanceStatus.SCHEDULED, MaintenanceStatus.IN_PROGRESS,
-        MaintenanceStatus.WAITING_PARTS,
-    ]
-    tickets = (
-        db.query(MaintenanceTicket)
-        .filter(
-            MaintenanceTicket.apartment_id == apartment_id,
-            MaintenanceTicket.status.in_(open_statuses),
-        )
-        .all()
-    )
-    for ticket in tickets:
-        db.add(MaintenanceUpdate(
-            ticket_id=ticket.id,
-            old_status=ticket.status,
-            new_status=MaintenanceStatus.CLOSED,
-            note="Automatically closed — lease terminated.",
-            created_at=datetime.now(),
-        ))
-        ticket.status = MaintenanceStatus.CLOSED
-        ticket.resolved_at = datetime.now()
-    if tickets:
-        db.commit()
-    return len(tickets)
-
-
-def cancel_open_tickets_for_tenant(db: Session, tenant_id: int) -> int:
-    """Cancel all open tickets linked to a tenant (called on tenant archive).
-    Returns count cancelled."""
-    from datetime import datetime
-    open_statuses = [
-        MaintenanceStatus.NEW, MaintenanceStatus.TRIAGED,
-        MaintenanceStatus.SCHEDULED, MaintenanceStatus.IN_PROGRESS,
-        MaintenanceStatus.WAITING_PARTS,
-    ]
-    tickets = (
-        db.query(MaintenanceTicket)
-        .filter(
-            MaintenanceTicket.tenant_id == tenant_id,
-            MaintenanceTicket.status.in_(open_statuses),
-        )
-        .all()
-    )
-    for ticket in tickets:
-        db.add(MaintenanceUpdate(
-            ticket_id=ticket.id,
-            old_status=ticket.status,
-            new_status=MaintenanceStatus.CLOSED,
-            note="Automatically closed — tenant archived.",
-            created_at=datetime.now(),
-        ))
-        ticket.status = MaintenanceStatus.CLOSED
-        ticket.resolved_at = datetime.now()
-    if tickets:
-        db.commit()
-    return len(tickets)

@@ -1,4 +1,6 @@
 """
+app/ui/create_complaint_dialog.py
+===================================
 Two dialogs:
   CreateComplaintDialog  — raise a new complaint on behalf of a tenant.
   UpdateComplaintDialog  — update status and add resolution notes.
@@ -174,11 +176,31 @@ class UpdateComplaintDialog(tb.Toplevel):
                     values=[s[0] for s in STATUSES],
                     state="readonly", font=("Helvetica", 12)).pack(fill=X, pady=(2, 12))
 
-        # Assign to
+        # Assign to — only staff who handle complaints
         lbl("Assign To (optional)")
-        managers = self.db.query(User).filter(User.is_active == True).all()
+        from app.db.models import Role, RoleName
+        # Only front_desk, location_admin, manager can handle complaints
+        allowed_roles = self.db.query(Role).filter(
+            Role.name.in_([
+                RoleName.FRONT_DESK,
+                RoleName.LOCATION_ADMIN,
+                RoleName.MANAGER,
+            ])
+        ).all()
+        allowed_role_ids = {r.id for r in allowed_roles}
+        staff_q = self.db.query(User).filter(
+            User.is_active == True,
+            User.role_id.in_(allowed_role_ids),
+        )
+        # City scoping — location admins only see staff from their city
+        city_id = getattr(self.user, "city_id", None)
+        if city_id:
+            staff_q = staff_q.filter(
+                (User.city_id == city_id) | (User.city_id == None)
+            )
+        staff = staff_q.order_by(User.full_name).all()
         self._staff_map = {"— Unassigned —": 0}
-        for u in managers:
+        for u in staff:
             self._staff_map[u.full_name or u.username] = u.id
         self.v_assigned = tb.StringVar(value="— Unassigned —")
         tb.Combobox(f, textvariable=self.v_assigned,

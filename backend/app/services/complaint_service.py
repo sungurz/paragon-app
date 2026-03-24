@@ -1,4 +1,6 @@
 """
+app/services/complaint_service.py
+===================================
 Business logic for complaint lifecycle.
 """
 
@@ -37,6 +39,14 @@ def create_complaint(
     db.add(complaint)
     db.commit()
     db.refresh(complaint)
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        log_action(db, action=AuditAction.COMPLAINT_CREATE,
+                   entity="complaint", entity_id=complaint.id,
+                   user_id=raised_by_user_id,
+                   detail=f"Subject: {subject} | Category: {category}")
+    except Exception:
+        pass
     return complaint, ""
 
 

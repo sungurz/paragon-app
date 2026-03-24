@@ -294,3 +294,46 @@ def get_recent_activity(db: Session, city_id: int | None = None, limit: int = 8)
     # Sort by date where available
     events.sort(key=lambda x: x["date"] or datetime.min, reverse=True)
     return events[:limit]
+
+
+def get_maintenance_costs(db: Session, city_id: int | None = None) -> dict:
+    """Total material costs and time spent across resolved/closed tickets."""
+    from app.db.models import (
+        MaintenanceTicket, MaintenanceStatus, Apartment, Property
+    )
+    from sqlalchemy import func
+
+    q = db.query(MaintenanceTicket).filter(
+        MaintenanceTicket.status.in_([
+            MaintenanceStatus.RESOLVED, MaintenanceStatus.CLOSED
+        ])
+    )
+    if city_id:
+        q = (q.join(Apartment, MaintenanceTicket.apartment_id == Apartment.id)
+               .join(Property, Apartment.property_id == Property.id)
+               .filter(Property.city_id == city_id))
+
+    tickets = q.all()
+    total_cost  = sum(float(t.material_cost or 0)  for t in tickets)
+    total_hours = sum(float(t.time_taken_hours or 0) for t in tickets)
+
+    # Top 5 most expensive tickets
+    top = sorted(
+        [t for t in tickets if t.material_cost],
+        key=lambda t: t.material_cost,
+        reverse=True
+    )[:5]
+
+    return {
+        "total_material_cost": round(total_cost, 2),
+        "total_hours":         round(total_hours, 1),
+        "resolved_count":      len(tickets),
+        "top_cost_tickets":    [
+            {
+                "title":    t.title,
+                "cost":     float(t.material_cost),
+                "hours":    float(t.time_taken_hours or 0),
+            }
+            for t in top
+        ],
+    }

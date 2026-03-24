@@ -1,4 +1,6 @@
 """
+app/services/payment_service.py
+================================
 Records a payment against an invoice, updates invoice status,
 and auto-generates a receipt. Card flow is fully simulated.
 """
@@ -98,6 +100,15 @@ def record_payment(
 
     # Auto-generate receipt
     create_receipt(db, payment)
+
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        log_action(db, action=AuditAction.PAYMENT_RECORD,
+                   entity="payment", entity_id=payment.id,
+                   detail=f"Invoice: {invoice_id} | Amount: £{amount:,.2f} | "
+                          f"Method: {payment_method}")
+    except Exception:
+        pass
 
     return payment, ""
 

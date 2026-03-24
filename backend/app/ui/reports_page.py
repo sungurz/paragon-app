@@ -14,7 +14,7 @@ from app.services.reports_service import (
     get_occupancy_by_city, get_occupancy_summary,
     get_finance_summary, get_monthly_revenue,
     get_maintenance_summary, get_open_tickets_by_status,
-    get_complaints_summary,
+    get_complaints_summary, get_maintenance_costs,
 )
 
 
@@ -169,6 +169,36 @@ class ReportsPage(tb.Frame):
         self._card(cards, str(maint['urgent_open']), "Urgent",        "danger")
         self._card(cards, str(maint['resolved']),    "Resolved",      "success")
         self._card(cards, str(maint['total']),       "Total",         "secondary")
+
+        # Maintenance costs for budget management
+        costs = get_maintenance_costs(self.db, city_id=city_id)
+        tb.Label(self._tab_maint, text="Maintenance Costs",
+                 font=("Georgia", 13, "bold")).pack(anchor=W, pady=(0, 8))
+
+        cost_cards = tb.Frame(self._tab_maint)
+        cost_cards.pack(fill=X, pady=(0, 12))
+        self._card(cost_cards, f"£{costs['total_material_cost']:,.2f}", "Total Material Cost", "danger")
+        self._card(cost_cards, f"{costs['total_hours']}h",              "Total Hours Spent",   "warning")
+        self._card(cost_cards, str(costs['resolved_count']),            "Jobs Completed",      "success")
+
+        if costs['top_cost_tickets']:
+            tb.Label(self._tab_maint, text="Most Expensive Jobs",
+                     font=("Georgia", 13, "bold")).pack(anchor=W, pady=(0, 8))
+            cols = ("title", "cost", "hours")
+            tree_c = tb.Treeview(self._tab_maint, columns=cols, show="headings",
+                                 bootstyle="dark", height=len(costs['top_cost_tickets']))
+            tree_c.heading("title", text="Ticket",        anchor=W)
+            tree_c.heading("cost",  text="Material Cost", anchor=CENTER)
+            tree_c.heading("hours", text="Hours Spent",   anchor=CENTER)
+            tree_c.column("title", width=280, anchor=W)
+            tree_c.column("cost",  width=120, anchor=CENTER)
+            tree_c.column("hours", width=100, anchor=CENTER)
+            for t in costs['top_cost_tickets']:
+                tree_c.insert("", END, values=(
+                    t["title"], f"£{t['cost']:,.2f}",
+                    f"{t['hours']}h" if t['hours'] else "—"
+                ))
+            tree_c.pack(fill=X, pady=(0, 20))
 
         # By status breakdown
         tb.Label(self._tab_maint, text="Open Tickets by Status",

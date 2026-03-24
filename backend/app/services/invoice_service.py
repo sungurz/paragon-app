@@ -51,6 +51,7 @@ def generate_invoice(
     due_date: date | None = None,
     generated_by_user_id: int | None = None,
     notes: str | None = None,
+    amount_override=None,
 ) -> tuple[Invoice | None, str]:
     """
     Generate a single invoice for a lease billing period.
@@ -84,7 +85,7 @@ def generate_invoice(
         tenant_id=lease.tenant_id,
         generated_by=generated_by_user_id,
         invoice_number=_next_invoice_number(db),
-        amount=lease.agreed_rent,
+        amount=amount_override if amount_override is not None else lease.agreed_rent,
         due_date=due_date,
         billing_period_start=billing_period_start,
         billing_period_end=billing_period_end,
@@ -93,6 +94,15 @@ def generate_invoice(
     )
     db.add(invoice)
     db.commit()
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        log_action(db, action=AuditAction.INVOICE_GENERATE,
+                   user_id=generated_by_user_id,
+                   entity="invoice", entity_id=invoice.id,
+                   detail=f"Invoice {invoice.invoice_number} | Lease {lease_id} | "
+                          f"£{invoice.amount:,.2f}")
+    except Exception:
+        pass
     db.refresh(invoice)
     return invoice, ""
 

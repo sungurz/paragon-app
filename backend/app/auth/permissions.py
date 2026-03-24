@@ -1,4 +1,6 @@
 """
+app/auth/permissions.py
+=======================
 Central permission checking for Paragon.
 
 Usage:
@@ -56,7 +58,7 @@ def get_permissions(user: "User") -> set[str]:
 # main_window.py iterates this list and only adds buttons the user can see.
 
 SIDEBAR_MODULES = [
-    ("🏠   Home",         "home",        None),               # always visible
+    ("🏠   Home",         "home",        None),               # always visible (hidden for tenants in main_window)
     ("👥   Users",        "users",       "user.view"),
     ("🏢   Tenants",      "tenants",     "tenant.view"),
     ("🏠   Apartments",   "apartments",  "apartment.view"),
@@ -64,6 +66,7 @@ SIDEBAR_MODULES = [
     ("🔧   Maintenance",  "maintenance", "maintenance.view"),
     ("📋   Complaints",   "complaints",  "complaint.view"),
     ("📊   Reports",      "reports",     "report.local"),
-    ("🖥   Dashboard",    "dashboard",   "dashboard.view"),
+    ("🖥   My Dashboard", "dashboard",   "dashboard.view"),
+    ("📋   Audit Log",    "audit_log",   "audit_log.view"),
     ("⚙️   Settings",     "settings",    None),               # always visible
 ]

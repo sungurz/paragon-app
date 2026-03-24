@@ -165,6 +165,13 @@ def archive_tenant(db: Session, tenant_id: int) -> bool:
         void_invoices_for_lease(db, lease.id)
 
     db.commit()
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        log_action(db, action=AuditAction.TENANT_ARCHIVE,
+                   entity="tenant", entity_id=tenant_id,
+                   detail=f"Tenant archived")
+    except Exception:
+        pass
     return True
 
 
@@ -175,6 +182,13 @@ def unarchive_tenant(db: Session, tenant_id: int) -> bool:
         return False
     tenant.is_active = True
     db.commit()
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        log_action(db, action=AuditAction.TENANT_REACTIVATE,
+                   entity="tenant", entity_id=tenant_id,
+                   detail="Tenant reactivated")
+    except Exception:
+        pass
     return True
 
 
@@ -192,10 +206,12 @@ def search_tenants(
     *,
     query: str = "",
     active_only: bool = True,
-    city_id: int | None = None,
     limit: int = 200,
 ) -> list[Tenant]:
-    """Search tenants by name/email/phone, optionally city-scoped."""
+    """
+    Search tenants by name, email, or phone.
+    Returns up to `limit` results.
+    """
     q = db.query(Tenant)
     if active_only:
         q = q.filter(Tenant.is_active == True)
@@ -206,28 +222,6 @@ def search_tenants(
             Tenant.email.ilike(like) |
             Tenant.phone.ilike(like)
         )
-    if city_id:
-        from app.db.models import LeaseAgreement, LeaseStatus, Apartment, Property
-        from sqlalchemy import or_
-        # Tenants with an active lease in this city
-        city_tenant_ids = (
-            db.query(LeaseAgreement.tenant_id)
-            .join(Apartment, LeaseAgreement.apartment_id == Apartment.id)
-            .join(Property, Apartment.property_id == Property.id)
-            .filter(Property.city_id == city_id)
-            .distinct()
-        )
-        # Tenants with NO active lease (available to assign to this city)
-        unleased_ids = (
-            db.query(Tenant.id)
-            .outerjoin(
-                LeaseAgreement,
-                (LeaseAgreement.tenant_id == Tenant.id) &
-                (LeaseAgreement.status == LeaseStatus.ACTIVE)
-            )
-            .filter(LeaseAgreement.id == None)
-        )
-        q = q.filter(or_(Tenant.id.in_(city_tenant_ids), Tenant.id.in_(unleased_ids)))
     return q.order_by(Tenant.full_name).limit(limit).all()
 
 

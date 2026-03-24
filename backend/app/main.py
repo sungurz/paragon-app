@@ -81,11 +81,23 @@ class ParagonApp(tb.Window):
             user_id       = user.id
             full_name     = user.full_name
             # For tenant role — find linked tenant record via Tenant.user_id
+            # If not linked, auto-link by matching email or full_name
             from app.db.models import Tenant as _Tenant
             tenant_id = None
             if role_value == "tenant":
+                # First try direct user_id link
                 t = db.query(_Tenant).filter(_Tenant.user_id == user.id).first()
+                if not t and user.email:
+                    # Auto-link by email
+                    t = db.query(_Tenant).filter(_Tenant.email == user.email).first()
+                if not t and user.full_name:
+                    # Auto-link by full name as last resort
+                    t = db.query(_Tenant).filter(_Tenant.full_name == user.full_name).first()
                 if t:
+                    # Save the link so we don't need to look up again next time
+                    if not t.user_id:
+                        t.user_id = user.id
+                        db.commit()
                     tenant_id = t.id
 
             # Build a lightweight session-independent user context object
@@ -99,6 +111,15 @@ class ParagonApp(tb.Window):
                 city_name=city_name,
                 tenant_id=tenant_id,
             )
+
+            # Audit log — record successful login
+            try:
+                from app.services.audit_service import log_action, AuditAction
+                log_action(db, action=AuditAction.LOGIN,
+                           user_id=user_id, username=username,
+                           detail=f"Login from role: {role_value}")
+            except Exception:
+                pass
 
         finally:
             db.close()

@@ -115,6 +115,18 @@ def create_lease(
 
     db.commit()
     db.refresh(lease)
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        tenant_obj = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+        apt_obj    = db.query(Apartment).filter(Apartment.id == apartment_id).first()
+        log_action(db, action=AuditAction.LEASE_CREATE,
+                   user_id=created_by_user_id,
+                   entity="lease", entity_id=lease.id,
+                   detail=f"Tenant: {tenant_obj.full_name if tenant_obj else tenant_id} | "
+                          f"Unit: {apt_obj.unit_number if apt_obj else apartment_id} | "
+                          f"Rent: £{agreed_rent:,.2f}")
+    except Exception:
+        pass
     return lease, ""
 
 
@@ -145,8 +157,15 @@ def end_lease(
     from app.services.invoice_service import void_invoices_for_lease
     cancel_open_tickets_for_apartment(db, lease.apartment_id)
     void_invoices_for_lease(db, lease.id)
-
     db.commit()
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        log_action(db, action=AuditAction.LEASE_END,
+                   entity="lease", entity_id=lease_id,
+                   user_id=ended_by_user_id,
+                   detail=f"Lease ended for apartment {lease.apartment_id}")
+    except Exception:
+        pass
     return True, ""
 
 
@@ -238,6 +257,15 @@ def approve_termination(
         cancel_open_tickets_for_apartment(db, lease.apartment_id)
 
     db.commit()
+    try:
+        from app.services.audit_service import log_action, AuditAction
+        log_action(db, action=AuditAction.LEASE_TERMINATE,
+                   entity="lease", entity_id=req.lease_id,
+                   user_id=reviewed_by_user_id,
+                   detail=f"Early termination approved. End: {req.intended_end_date} | "
+                          f"Penalty: £{req.penalty_amount:,.2f}")
+    except Exception:
+        pass
     return True, ""
 
 
