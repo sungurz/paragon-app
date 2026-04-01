@@ -1,6 +1,5 @@
 """
 Paragon Property Management System — Full Domain Model
-=======================================================
 Schema covers all modules required by the case study:
   - Identity & RBAC
   - Location hierarchy (City → Property → Apartment)

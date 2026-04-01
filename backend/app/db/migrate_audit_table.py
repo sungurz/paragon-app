@@ -1,12 +1,3 @@
-"""
-app/db/migrate_audit_table.py
-===============================
-Adds missing columns to the audit_logs table.
-Safe to run multiple times — skips columns that already exist.
-
-    python -m app.db.migrate_audit_table
-"""
-
 from app.db.database import engine
 from sqlalchemy import text, inspect
 
